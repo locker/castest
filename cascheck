@@ -1,0 +1,50 @@
+#! /bin/bash
+#
+# Given the output of a castest execution, analyze it and print possible
+# consistency violations.
+#
+
+# Input as it is
+input=$(mktemp)
+cat > $input
+
+# All successful operations sorted by value
+sorted=$(mktemp)
+grep success $input | sort -sn -k 2 > $sorted
+
+min=$(head -n1 $sorted | cut -d ' ' -f 2)
+max=$(tail -n1 $sorted | cut -d ' ' -f 2)
+
+# Expected successful operations
+expected=$(mktemp)
+seq $min $max | sed 's/\(.*\)/0 \1 success/' > $expected
+
+# All operations sorted by client id
+partitioned=$(mktemp)
+sort -sn -k 1 $input > $partitioned
+
+# All operations sorted by client id first and by value second
+ordered=$(mktemp)
+sort -sn -k 1 -k 2 $input > $ordered
+
+echo "Success: $(grep -c success $input)"
+echo "Failures: $(grep -c fail $input)"
+echo "Errors: $(grep -c error $input)"
+
+echo "Min value: $min"
+echo "Max value: $max"
+
+# Print missing values (this may occur without violating consistency if an operation
+# succeeded but an error, e.g. timeout, was returned to the client)
+echo Gaps:
+sort -snm -k 2 $sorted $expected | uniq -u -f 1 | cut -d ' ' -f 2
+
+# Print duplicate values seen by different clients (clear consistency violation)
+echo Duplicates:
+uniq -D -f 1 $sorted
+
+# Print out-of-order values seen by the same client (clear consistency violation)
+echo Disordered:
+diff -U 2 $partitioned $ordered | tail -n+3
+
+rm -f $input $sorted $expected $partitioned $ordered
